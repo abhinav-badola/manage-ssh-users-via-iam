@@ -99,6 +99,9 @@ def list_keys_per_user(**kwargs):
 
 
 def populate_users(**kwargs):
+    paginator = iam.get_paginator('get_group')
+    response_iterator = paginator.paginate(**kwargs)
+
     return [
         dict({unicode('authorized_keys'): unicode('\n'.join([
                                                                 '%s SSHPublicKeyId=%s' % (
@@ -109,7 +112,8 @@ def populate_users(**kwargs):
                                                                 if ssh_key['Status'] == 'Active'
                                                                 ])),
               unicode('ssh_user'): unicode(iam_user['UserName'].lower())}.items() + iam_user.items())
-        for iam_user in iam.get_group(**kwargs)['Users']
+        for response in response_iterator
+        for iam_user in response['Users']
         ]
 
 
@@ -145,7 +149,7 @@ def create_user(username, groupname, rotate_user=False):
         delete_user(username)
 
     log.info('Create user %s' % username)
-    create_user_command = ['/usr/sbin/useradd', '-G', '{},wheel'.format(groupname), '-c', username, '-m', username]
+    create_user_command = ['/usr/sbin/useradd', '-G', '{}'.format(groupname), '-c', username, '-m', username]
     system_call(create_user_command)
 
     return user_exists(username=username)
@@ -191,25 +195,6 @@ def write_ssh_authorized_keys(iam_users):
         os.chown(ssh_authorized_keys, pw_uid, pw_gid)
         os.chmod(ssh_authorized_keys, 0600)
 
-
-def write_sudo_config(groupname):
-    sudoers_file = os.path.join('/etc/sudoers.d/', groupname)
-
-    log.info('Writing sudoers config')
-    f = open(sudoers_file, 'w')
-    f.write('%%%s ALL=(ALL) NOPASSWD:ALL' % groupname)
-    f.close()
-
-    os.chown(sudoers_file, 0, 0)
-    os.chmod(sudoers_file, 600)
-
-
-def delete_sudo_config(groupname):
-    sudoers_file = os.path.join('/etc/sudoers.d/', groupname)
-
-    return True if not os.path.exists(sudoers_file) else os.remove(sudoers_file)
-
-
 def delete_user(username):
     log.info('Delete user %s' % username)
 
@@ -252,14 +237,12 @@ def start(group):
     sync_users(iam_users=iam_user_list, groupname=group, local_group_data=local_group)
 
     write_ssh_authorized_keys(iam_users=iam_user_list)
-    write_sudo_config(groupname=group)
     log.info('Done deploying users')
 
 
 def stop(group):
     log.info('Undeploying users')
 
-    delete_sudo_config(groupname=group)
     delete_users(groupname=group)
     log.info('Done undeploying users')
 
